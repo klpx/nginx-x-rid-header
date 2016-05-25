@@ -2,39 +2,66 @@
 #include <ngx_http.h>
 #include <nginx.h>
 #include <ngx_http_variables.h>
-
+#include <stdio.h>
+#include <ossp/uuid.h>
+#include "search_headers_in.c"
 #if (NGX_FREEBSD)
 #error FreeBSD is not supported yet, sorry.
 #elif (NGX_LINUX)
-#include <uuid.h>      
+#include <uuid.h>
 #elif (NGX_SOLARIS)
 #error Solaris is not supported yet, sorry.
 #elif (NGX_DARWIN)
-#include <uuid/uuid.h>      
+#include <uuid/uuid.h>
 #endif
-
 // TODO:
 //
 // * make the name of the variable configurable
-
+//static ngx_int_t ngx_http_set_request_id_header(ngx_http_request_t *r,
+//    ngx_http_headers_more_header_val_t *hv, ngx_str_t *value);
+//
+//static ngx_http_header_t ngx_http_headers_request_id_set_handlers[] = {
+//  { ngx_string("X-Request-Id"),
+//      offsetof(ngx_http_headers_in_t, request_id),
+//      ngx_http_set_requestid_header },
+//
+//  { ngx_null_string, 0, ngx_http_set_header }
+//}
+static ngx_str_t  ngx_x_rid_header_in_name = ngx_string("x-request-id");
 ngx_int_t ngx_x_rid_header_get_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data) {
-  u_char *p;     
-
+  u_char *p;
   p = ngx_pnalloc(r->pool, 37);
   if (p == NULL) {
       return NGX_ERROR;
-  }       
-      
+  }
+
+  uuid_t* incoming_uuid = NULL;
+  ngx_table_elt_t * req_header = search_headers_in(r, ngx_x_rid_header_in_name.data, ngx_x_rid_header_in_name.len);
+  if (req_header != NULL) {
+    if ( uuid_create(&incoming_uuid) ) {
+      return -1;
+    }
+    uuid_rc_t incoming_import_result = uuid_import(incoming_uuid, UUID_FMT_STR, req_header->value.data, req_header->value.len);
+    if (incoming_import_result != UUID_RC_OK) {
+      uuid_destroy(incoming_uuid);
+      incoming_uuid = NULL;
+    }
+  }
+
 #if (NGX_FREEBSD)
 #error FreeBSD is not supported yet, sorry.
 #elif (NGX_LINUX)
   uuid_t* uuid;
-  if ( uuid_create(&uuid) ) {
-    return -1;
-  }
-  if ( uuid_make(uuid, UUID_MAKE_V4) ) {
-    uuid_destroy(uuid);
-    return -1;
+  if ( incoming_uuid != NULL) {
+    uuid = incoming_uuid;
+  } else {
+    if ( uuid_create(&uuid) ) {
+      return -1;
+    }
+    if ( uuid_make(uuid, UUID_MAKE_V4) ) {
+      uuid_destroy(uuid);
+      return -1;
+    }
   }
   size_t data_len = 37;
   if ( uuid_export(uuid, UUID_FMT_STR, &p, &data_len) ) {
@@ -46,21 +73,18 @@ ngx_int_t ngx_x_rid_header_get_variable(ngx_http_request_t *r, ngx_http_variable
 #error Solaris is not supported yet, sorry.
 #elif (NGX_DARWIN)
   uuid_t uuid;
-  uuid_generate(uuid);       
+  uuid_generate(uuid);
   uuid_unparse_lower(uuid, (char*)p);
 #endif
-
   v->len = 36;
   v->valid = 1;
   v->no_cacheable = 0;
   v->not_found = 0;
   v->data = p;
-
   return NGX_OK;
-}   
-                                  
-static ngx_str_t  ngx_x_rid_header_variable_name = ngx_string("request_id");
+}
 
+static ngx_str_t  ngx_x_rid_header_variable_name = ngx_string("request_id");
 static ngx_int_t ngx_x_rid_header_add_variables(ngx_conf_t *cf)
 {
   ngx_http_variable_t* var = ngx_http_add_variable(cf, &ngx_x_rid_header_variable_name, NGX_HTTP_VAR_NOHASH);
@@ -70,37 +94,34 @@ static ngx_int_t ngx_x_rid_header_add_variables(ngx_conf_t *cf)
   var->get_handler = ngx_x_rid_header_get_variable;
   return NGX_OK;
 }
-               
+
 static ngx_http_module_t  ngx_x_rid_header_module_ctx = {
   ngx_x_rid_header_add_variables,     /* preconfiguration */
   NULL,                               /* postconfiguration */
-
   NULL,        /* create main configuration */
   NULL,        /* init main configuration */
-            
+
   NULL,        /* create server configuration */
   NULL,        /* merge server configuration */
-            
+
   NULL,        /* create location configuration */
   NULL         /* merge location configuration */
-};                        
-
+};
 static ngx_command_t  ngx_x_rid_header_module_commands[] = {
   ngx_null_command
 };
-                      
+
 ngx_module_t  ngx_x_rid_header_module = {
   NGX_MODULE_V1,
   &ngx_x_rid_header_module_ctx,      /* module context */
   ngx_x_rid_header_module_commands,  /* module directives */
   NGX_HTTP_MODULE,                   /* module type */
-  NULL,                              /* init master */              
-  NULL,                              /* init module */              
-  NULL,                              /* init process */             
-  NULL,                              /* init thread */              
-  NULL,                              /* exit thread */              
-  NULL,                              /* exit process */             
-  NULL,                              /* exit master */              
-  NGX_MODULE_V1_PADDING   
+  NULL,                              /* init master */
+  NULL,                              /* init module */
+  NULL,                              /* init process */
+  NULL,                              /* init thread */
+  NULL,                              /* exit thread */
+  NULL,                              /* exit process */
+  NULL,                              /* exit master */
+  NGX_MODULE_V1_PADDING
 };
-
